@@ -167,20 +167,28 @@ async def check_repositories_ghaw(
     batch_size: int = 25,
     max_concurrency: int = 5,
     on_batch_complete: Callable[[int, int], None] | None = None,
+    initial_results: dict[str, bool] | None = None,
+    on_batch_success: Callable[[dict[str, bool]], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> dict[str, bool]:
     """
     Orquesta el análisis de múltiples repositorios distribuyéndolos en lotes concurrentes
     regulados mediante un semáforo asíncrono para evitar límites secundarios de GitHub.
+
+    Soporta reanudación mediante initial_results y guardado incremental mediante on_batch_success.
 
     Args:
         repos: Lista completa de repositorios a analizar.
         token: Token de GitHub.
         batch_size: Cantidad de repositorios por consulta GraphQL (recomendado 20-30).
         max_concurrency: Cantidad máxima de consultas concurrentes simultáneas.
-        on_batch_complete: Callback opcional llamado al completar cada lote con (completados, total).
+        on_batch_complete: Callback opcional llamado con (completados, total).
+        initial_results: Resultados previamente calculados para omitir reconsultas.
+        on_batch_success: Callback opcional ejecutado tras cada lote exitoso con el estado acumulado.
+        cancel_event: Evento asíncrono opcional para solicitar la cancelación limpia del escaneo.
 
     Returns:
-        dict[str, bool]: Diccionario acumulado con el resultado de todos los repositorios.
+        dict[str, bool]: Diccionario acumulado con el resultado de los repositorios procesados.
     """
     if not repos:
         return {}
@@ -193,26 +201,51 @@ async def check_repositories_ghaw(
             seen.add(r)
             unique_repos.append(r)
 
+    total_repos = len(unique_repos)
+    results: dict[str, bool] = dict(initial_results) if initial_results else {}
+
+    # Filtrar únicamente los repositorios que aún no han sido procesados
+    pending_repos = [r for r in unique_repos if r.full_name not in results]
+    completed_count = len(results)
+
+    # Notificar progreso inicial si ya había resultados
+    if on_batch_complete and completed_count > 0:
+        on_batch_complete(completed_count, total_repos)
+
+    if not pending_repos:
+        return results
+
     # Dividir en lotes
     batches = [
-        unique_repos[i: i + batch_size]
-        for i in range(0, len(unique_repos), batch_size)
+        pending_repos[i: i + batch_size]
+        for i in range(0, len(pending_repos), batch_size)
     ]
 
     semaphore = asyncio.Semaphore(max_concurrency)
-    completed_count = 0
-    total_repos = len(unique_repos)
-    results: dict[str, bool] = {}
     lock = asyncio.Lock()
 
     async with httpx.AsyncClient() as client:
         async def process_batch(batch_repos: list[RepoTarget]) -> None:
             nonlocal completed_count
+
+            if cancel_event and cancel_event.is_set():
+                return
+
             async with semaphore:
+                if cancel_event and cancel_event.is_set():
+                    return
+
                 batch_res = await fetch_batch_ghaw_status(client, batch_repos, token)
                 async with lock:
                     results.update(batch_res)
                     completed_count += len(batch_repos)
+
+                    if on_batch_success:
+                        try:
+                            on_batch_success(results)
+                        except Exception as e:
+                            logger.warning(f"Error en callback on_batch_success: {e}")
+
                     if on_batch_complete:
                         on_batch_complete(completed_count, total_repos)
 

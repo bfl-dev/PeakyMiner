@@ -10,7 +10,6 @@ from src.github_client import (
     GITHUB_GRAPHQL_URL,
     GitHubAuthError,
     GitHubRateLimitError,
-    GitHubAPIError,
     build_batch_query,
     check_repositories_ghaw,
     fetch_batch_ghaw_status,

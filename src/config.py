@@ -4,6 +4,7 @@ Gestión de configuración y variables de entorno para PeakyMiner.
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Carga variables de entorno desde el archivo .env en el directorio actual o raíz

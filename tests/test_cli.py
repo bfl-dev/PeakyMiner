@@ -194,3 +194,125 @@ def test_cli_execution_mocked(tmp_path: Path, mocker: pytest.MockFixture) -> Non
     assert len(df_res) == 1
     assert df_res["repository"].values[0] == "octocat/agent-repo"
     assert bool(df_res["has_ghaw"].values[0]) is True
+
+
+def test_cli_resume_from_checkpoint(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica que la CLI detecte un checkpoint previo y reanude el escaneo."""
+    from src.state import StateManager
+
+    input_file = tmp_path / "repos_resume.csv"
+    output_file = tmp_path / "output_resume.csv"
+    checkpoint_file = tmp_path / "my_custom_ckpt.json"
+
+    pd.DataFrame({"repo": ["org/repo1", "org/repo2"]}).to_csv(input_file, index=False)
+
+    # Crear checkpoint previo con org/repo1 ya evaluado
+    state_mgr = StateManager(input_file=input_file, custom_checkpoint_path=checkpoint_file)
+    state_mgr.save_checkpoint({"org/repo1": True}, total_repos=2)
+
+    # Mockear check_repositories_ghaw
+    mocker.patch(
+        "src.cli.check_repositories_ghaw",
+        return_value={"org/repo1": True, "org/repo2": False},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            str(input_file),
+            "--output",
+            str(output_file),
+            "--token",
+            "test_token",
+            "--checkpoint",
+            str(checkpoint_file),
+            "--resume",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Checkpoint detectado" in result.stdout
+    assert "1/2" in result.stdout
+    assert output_file.exists()
+
+
+def test_cli_interruption_menu_save(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica que ante una interrupción, la opción '1' guarde los resultados parciales."""
+    input_file = tmp_path / "repos_interrupt.csv"
+    output_file = tmp_path / "output_partial.csv"
+
+    pd.DataFrame({"repo": ["org/repo1", "org/repo2"]}).to_csv(input_file, index=False)
+
+    # Simular que check_repositories_ghaw lanza KeyboardInterrupt tras registrar algo en callback
+    def mock_check(*args: object, **kwargs: object) -> dict[str, bool]:
+        raise KeyboardInterrupt()
+
+    mocker.patch("src.cli.check_repositories_ghaw", side_effect=mock_check)
+    mocker.patch("src.cli.show_interruption_menu", return_value="1")
+
+    result = runner.invoke(
+        app,
+        [
+            str(input_file),
+            "--output",
+            str(output_file),
+            "--token",
+            "test_token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Resultados parciales guardados" in result.stdout
+    assert output_file.exists()
+
+
+def test_cli_interruption_menu_cancel(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica que ante una interrupción, la opción '3' cancele y descarte la salida."""
+    input_file = tmp_path / "repos_cancel.csv"
+    output_file = tmp_path / "output_discard.csv"
+
+    pd.DataFrame({"repo": ["org/repo1", "org/repo2"]}).to_csv(input_file, index=False)
+
+    mocker.patch("src.cli.check_repositories_ghaw", side_effect=KeyboardInterrupt())
+    mocker.patch("src.cli.show_interruption_menu", return_value="3")
+
+    result = runner.invoke(
+        app,
+        [
+            str(input_file),
+            "--output",
+            str(output_file),
+            "--token",
+            "test_token",
+        ],
+    )
+
+    assert result.exit_code == 130
+    assert "Operación cancelada por el usuario" in result.stdout
+    assert not output_file.exists()
+
+
+def test_cli_rate_limit_emergency_save(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica que ante un error de Rate Limit se salven los datos de emergencia."""
+    from src.github_client import GitHubRateLimitError
+
+    input_file = tmp_path / "repos_ratelimit.csv"
+    output_file = tmp_path / "output_ratelimit.csv"
+
+    pd.DataFrame({"repo": ["org/repo1"]}).to_csv(input_file, index=False)
+
+    mocker.patch("src.cli.check_repositories_ghaw", side_effect=GitHubRateLimitError("Cuota agotada"))
+
+    result = runner.invoke(
+        app,
+        [
+            str(input_file),
+            "--output",
+            str(output_file),
+            "--token",
+            "test_token",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Límite de Tasa Alcanzado" in result.stdout

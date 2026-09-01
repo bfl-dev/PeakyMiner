@@ -4,6 +4,7 @@ Módulo de procesamiento de archivos CSV con pandas para entrada y salida de dat
 
 import logging
 from pathlib import Path
+
 import pandas as pd
 
 from src.models import RepoTarget
@@ -116,31 +117,40 @@ def save_results_to_csv(
     Returns:
         int: Cantidad de registros exportados.
     """
-    # Mapear cada fila al resultado booleano
-    has_ghaw_list: list[bool] = []
+    # Mapear cada fila al resultado booleano y de estado
+    has_ghaw_list: list[bool | None] = []
+    status_list: list[str] = []
     canonical_names: list[str] = []
 
     for _, value in df[repo_col].items():
         if pd.isna(value):
             has_ghaw_list.append(False)
+            status_list.append("INVALID")
             canonical_names.append("")
             continue
 
         try:
             target = RepoTarget.from_raw(str(value))
             canonical_names.append(target.full_name)
-            has_ghaw_list.append(results.get(target.full_name, False))
+            if target.full_name in results:
+                is_positive = bool(results[target.full_name])
+                has_ghaw_list.append(is_positive)
+                status_list.append("DETECTED" if is_positive else "NOT_DETECTED")
+            else:
+                has_ghaw_list.append(False)
+                status_list.append("PENDING")
         except ValueError:
             canonical_names.append(str(value))
             has_ghaw_list.append(False)
+            status_list.append("INVALID")
 
     df_out = df.copy()
     df_out["ghaw_canonical_repo"] = canonical_names
     df_out["has_ghaw"] = has_ghaw_list
-    df_out["ghaw_status"] = ["DETECTED" if val else "NOT_DETECTED" for val in has_ghaw_list]
+    df_out["ghaw_status"] = status_list
 
     if filter_positive_only:
-        df_out = df_out[df_out["has_ghaw"]]
+        df_out = df_out[[bool(x) for x in df_out["has_ghaw"]]]
 
     # Crear directorios padres si no existen
     output_path.parent.mkdir(parents=True, exist_ok=True)

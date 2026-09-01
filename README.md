@@ -141,7 +141,19 @@ Para listas de miles de repositorios, ajusta el tamaño de lote y concurrencia:
 pkminer lista_masiva.csv -o salida.csv --batch-size 30 --concurrency 10
 ```
 
-#### 4. Pasar el Token Directamente
+#### 4. Reanudar Análisis Interrumpido o tras Error
+PeakyMiner guarda checkpoints de forma automática tras cada lote procesado. Si el proceso se detiene o falla por límite de cuota (rate limit), puedes reanudarlo instantáneamente sin volver a consultar los repositorios ya analizados:
+```bash
+pkminer repos.csv -o resultado.csv --resume
+```
+
+#### 5. Menú Interactivo de Terminación / Pausa
+Al presionar `Ctrl+C` durante el análisis, PeakyMiner no arroja un error abrupto sino que despliega un menú interactivo:
+- **[1] Guardar resultados parciales y salir**: Exporta las filas procesadas hasta el momento al CSV de salida y preserva el checkpoint.
+- **[2] Reanudar escaneo**: Continúa el análisis de inmediato desde donde se pausó.
+- **[3] Cancelar y descartar salida**: Finaliza sin escribir el archivo de salida final.
+
+#### 6. Pasar el Token Directamente
 ```bash
 pkminer repos.csv -o salida.csv --token ghp_1234567890abcdef
 ```
