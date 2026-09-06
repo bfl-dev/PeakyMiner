@@ -2,8 +2,8 @@
 Pruebas unitarias para el gestor de estado y checkpoints (src/state.py).
 """
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 from src.state import StateManager
 
