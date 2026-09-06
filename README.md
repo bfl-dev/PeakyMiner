@@ -28,45 +28,36 @@ Un repositorio es clasificado como usuario de **GH-AW** si dentro del directorio
 
 - **Alto Rendimiento con GraphQL Batching**: Agrupa de 20 a 30 repositorios por consulta GraphQL utilizando *aliases*, reduciendo drásticamente la latencia y optimizando el consumo de cuota de la API de GitHub.
 - **Concurrencia Controlada Asíncrona**: Utiliza `httpx.AsyncClient`, `asyncio` y semáforos para realizar múltiples consultas en paralelo respetando los límites secundarios (*secondary rate limits*) de GitHub.
-- **Modelado Robusto con Pydantic**: Valida y normaliza automáticamente múltiples formatos de repositorios (`owner/repo`, URLs completas `https://github.com/...`, URLs con `.git`, SSH, etc.).
-- **Procesamiento de Datos con Pandas**: Identifica automáticamente columnas relevantes en archivos CSV y exporta resultados detallados con metadatos y opciones de filtrado.
-- **Interfaz CLI Moderna y Amigable**: Construida con `Typer` y `Rich`, con barras de progreso en tiempo real, tablas de resumen y feedback visual claro.
-- **Entorno Dev Container Integrado**: Configurado para desarrollo instantáneo en VS Code con Python 3.12 y el gestor de paquetes ultra-rápido `uv`.
-
----
-
-## 📁 Estructura del Repositorio
+- **Extracción Profunda en 2 Fases**: Localiza pares de archivos confirmados (Fase 1) y extrae metadatos de repositorios y blobs Markdown (Fase 2).
+- **Manejo Resiliente de YAML/Markdown**: Parsea especificaciones de agentes con captura controlada de errores de sintaxis YAML, preservando prompts y contenido textual sin detener el pipeline.
+- **Modelo Relacional en 3 Tablas Apache Parquet**: Persiste `repositories`, `workflows` y `workflow_triggers` con tipado estricto PyArrow, claves deterministas UUIDv5 y compresión Snappy.
+- **Publicación en Hugging Face Datasets**: Autogeneración de Dataset Card (`README.md`) y subida automatizada con `huggingface_hub`.
 
 ```text
 .
 ├── .devcontainer/
 │   └── devcontainer.json      # Configuración de entorno de desarrollo aislado
-├── .env.example               # Plantilla para variables de entorno
+├── .env.example               # Plantilla para variables de entorno (GitHub y Hugging Face)
 ├── .gitignore                 # Exclusiones de control de versiones
-├── pyproject.toml             # Configuración de empaquetado, dependencias y herramientas
+├── docs/                      # Documentación técnica y formal
+│   ├── er_diagram.md          # Diagrama Entidad-Relación nativo en Mermaid
+│   ├── data_dictionary.md     # Diccionario de datos para las 3 tablas Parquet
+├── pyproject.toml             # Configuración de empaquetado y dependencias
 ├── README.md                  # Documentación principal del proyecto
-├── src/
-│   ├── __init__.py            # Versión y metadatos del paquete
-│   ├── cli.py                 # Punto de entrada Typer y orquestación asíncrona
-│   ├── config.py              # Carga y validación de variables de entorno (Token)
-│   ├── csv_processor.py       # Lectura, mapeo y exportación con pandas
+│   ├── extractor.py           # Orquestación de Fase 1/2 y parseo resiliente YAML/Markdown
 │   ├── github_client.py       # Cliente GraphQL asíncrono con HTTPX y batches
+│   ├── hf_publisher.py        # Generación de Dataset Card y subida a Hugging Face
 │   ├── logic.py               # Lógica pura de detección de patrones GH-AW
-│   └── models.py              # Modelos Pydantic y validación de URLs
+│   ├── parquet_writer.py      # Conversión a PyArrow y exportación Parquet Snappy
+│   ├── schemas.py             # Esquemas explícitos PyArrow de las 3 tablas
 └── tests/
-    ├── __init__.py
     ├── test_cli.py            # Pruebas de integración CLI con CliRunner
-    ├── test_github.py         # Pruebas mockeando la API GraphQL y lotes
-    └── test_logic.py          # Pruebas unitarias de la lógica de emparejamiento
+    ├── test_extractor.py      # Pruebas de parseo de frontmatter válido, corrupto y Markdown
+    └── test_state.py          # Pruebas de checkpoints y recuperación ante fallos
 ```
 
----
 
 ## ⚙️ Instalación y Configuración
-
-### Opción 1: Con Dev Containers (Recomendado para VS Code)
-
-1. Abre el repositorio en Visual Studio Code.
 2. Haz clic en **"Reopen in Container"** cuando aparezca la notificación (o usa la paleta de comandos `Ctrl+Shift+P` / `Cmd+Shift+P` -> `Dev Containers: Rebuild and Reopen in Container`).
 3. Las extensiones y dependencias con `uv` se instalarán automáticamente.
 
@@ -115,70 +106,45 @@ Para consultar la API GraphQL de GitHub, se requiere un Personal Access Token (C
 
 ## 📖 Uso de la CLI (`pkminer` / `miner`)
 
-La herramienta se puede invocar mediante los comandos `pkminer` o `miner`:
+PeakyMiner soporta subcomandos explícitos (`detect`, `extract`, `upload`) y preserva la invocación directa retrocompatible:
 
 ```bash
-pkminer [OPCIONES] INPUT_CSV
-```
+# Subcomandos explícitos
+pkminer detect <input.csv> [OPCIONES]
+pkminer extract <input.csv> [OPCIONES]
+pkminer upload [OPCIONES]
+
+# Invocación directa retrocompatible (enruta automáticamente a detect)
+pkminer repos.csv -o resultado.csv
 
 ### Ejemplos Prácticos
 
-#### 1. Análisis Básico
-Analiza una lista de repositorios y guarda el resultado completo en `output.csv`:
-```bash
-pkminer repos.csv --output resultado.csv
+
+# Reanudación desde checkpoint ante interrupción o rate limit
+pkminer detect repos.csv -o resultado.csv --resume
 ```
 
-#### 2. Filtrar Únicamente Repositorios con GH-AW
-Exporta solo los repositorios donde se confirmó la presencia de GH-AW:
-```bash
-pkminer repos.csv -o ghaw_detectados.csv --filter-positive
-```
+#### 2. Extracción Profunda y Generación Parquet (`pkminer extract`)
+# Extrae contenido .md, metadatos y genera las 3 tablas Parquet + README.md
+pkminer extract ghaw_detectados.csv --output-dir ./dataset
+pkminer upload --dataset-dir ./dataset --hf-repo usuario/gh-agentic-workflows
 
-#### 3. Ajustar Lotes y Concurrencia para Grandes Volúmenes
-Para listas de miles de repositorios, ajusta el tamaño de lote y concurrencia:
-```bash
-pkminer lista_masiva.csv -o salida.csv --batch-size 30 --concurrency 10
-```
+# Pasando el token directamente
+pkminer upload -d ./dataset -r usuario/gh-agentic-workflows --token hf_123456789
 
-#### 4. Reanudar Análisis Interrumpido o tras Error
-PeakyMiner guarda checkpoints de forma automática tras cada lote procesado. Si el proceso se detiene o falla por límite de cuota (rate limit), puedes reanudarlo instantáneamente sin volver a consultar los repositorios ya analizados:
-```bash
-pkminer repos.csv -o resultado.csv --resume
-```
-
-#### 5. Menú Interactivo de Terminación / Pausa
-Al presionar `Ctrl+C` durante el análisis, PeakyMiner no arroja un error abrupto sino que despliega un menú interactivo:
-- **[1] Guardar resultados parciales y salir**: Exporta las filas procesadas hasta el momento al CSV de salida y preserva el checkpoint.
-- **[2] Reanudar escaneo**: Continúa el análisis de inmediato desde donde se pausó.
-- **[3] Cancelar y descartar salida**: Finaliza sin escribir el archivo de salida final.
-
-#### 6. Pasar el Token Directamente
-```bash
-pkminer repos.csv -o salida.csv --token ghp_1234567890abcdef
-```
-
----
-
-## 📊 Formato del Archivo CSV
-
+> Para más detalles, consulta la [Guía Completa de Uso de la CLI](docs/cli_usage.md), el [Diagrama Entidad-Relación](docs/er_diagram.md) y el [Diccionario de Datos](docs/data_dictionary.md).
 ### Archivo de Entrada (`input.csv`)
 El CSV de entrada puede tener cualquiera de las siguientes columnas (`repo`, `repository`, `url`, `github_url`, `name`, `target`) o ser un CSV de una sola columna:
 
 ```csv
-repo,category
 facebook/react,frontend
 octocat/Hello-World,demo
 https://github.com/astral-sh/uv,tools
-```
-
 ### Archivo de Salida Generado (`output.csv`)
 Conserva las columnas originales y agrega el estado canónico de detección:
 
 ```csv
 repo,category,ghaw_canonical_repo,has_ghaw,ghaw_status
-facebook/react,frontend,facebook/react,False,NOT_DETECTED
-octocat/Hello-World,demo,octocat/Hello-World,False,NOT_DETECTED
 https://github.com/astral-sh/uv,tools,astral-sh/uv,False,NOT_DETECTED
 ```
 
@@ -186,7 +152,6 @@ https://github.com/astral-sh/uv,tools,astral-sh/uv,False,NOT_DETECTED
 
 ## 🧪 Ejecución de Pruebas
 
-La suite de pruebas incluye tests unitarios de lógica pura, mocks de la API GraphQL de GitHub y pruebas de integración de la CLI:
 
 ```bash
 # Ejecutar todas las pruebas con pytest
