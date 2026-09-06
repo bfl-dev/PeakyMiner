@@ -3,6 +3,8 @@ Modelos Pydantic para representación y validación de repositorios de GitHub.
 """
 
 import re
+import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -114,3 +116,80 @@ class RepoTarget(BaseModel):
 
     def __str__(self) -> str:
         return self.full_name
+
+
+def generate_repo_id(owner: str, name: str) -> str:
+    """Genera un UUIDv5 determinista derivado del nombre canónico del repositorio."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://github.com/{owner.lower()}/{name.lower()}"))
+
+
+def generate_workflow_id(repo_id: str, file_path: str) -> str:
+    """Genera un UUIDv5 determinista derivado de repo_id y la ruta del archivo."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_id}:{file_path}"))
+
+
+def generate_trigger_id(workflow_id: str, event_type: str, index: int) -> str:
+    """Genera un UUIDv5 determinista derivado de workflow_id, tipo de evento e índice."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{workflow_id}:{event_type}:{index}"))
+
+
+class WorkflowFilePair(BaseModel):
+    """Representa un par de archivos confirmados .md y .lock.yml de GH-AW."""
+
+    basename: str
+    md_path: str
+    lock_path: str
+
+
+class RepositoryRecord(BaseModel):
+    """Representa un registro de la tabla repositories.parquet."""
+
+    repo_id: str
+    owner: str
+    name: str
+    canonical_url: str
+    stars_count: int
+    forks_count: int
+    primary_language: str | None = None
+    is_fork: bool
+    license_spdx: str | None = None
+    default_branch: str
+    scanned_at: datetime
+
+
+class WorkflowRecord(BaseModel):
+    """Representa un registro de la tabla workflows.parquet."""
+
+    workflow_id: str
+    repo_id: str
+    file_path: str
+    basename: str
+    lock_path: str
+    blob_sha: str
+    name: str | None = None
+    description: str | None = None
+    model_engine: str | None = None
+    tools: list[str] | None = None
+    permissions: str | None = None
+    raw_frontmatter: str | None = None
+    body_markdown: str | None = None
+    body_word_count: int = 0
+    body_char_count: int = 0
+    has_syntax_error: bool = False
+
+
+class WorkflowTriggerRecord(BaseModel):
+    """Representa un registro de la tabla workflow_triggers.parquet."""
+
+    trigger_id: str
+    workflow_id: str
+    event_type: str
+    trigger_config: str | None = None
+
+
+class ExtractedData(BaseModel):
+    """Contenedor de todos los registros extraídos para exportación a Parquet."""
+
+    repositories: list[RepositoryRecord] = Field(default_factory=list)
+    workflows: list[WorkflowRecord] = Field(default_factory=list)
+    triggers: list[WorkflowTriggerRecord] = Field(default_factory=list)
