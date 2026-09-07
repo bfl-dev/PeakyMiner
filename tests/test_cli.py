@@ -2,6 +2,7 @@
 Pruebas de integración para la CLI (src/cli.py), modelos y procesamiento de CSV.
 """
 
+from datetime import UTC
 from pathlib import Path
 
 import pandas as pd
@@ -316,3 +317,140 @@ def test_cli_rate_limit_emergency_save(tmp_path: Path, mocker: pytest.MockFixtur
 
     assert result.exit_code == 1
     assert "Límite de Tasa Alcanzado" in result.stdout
+
+
+def test_cli_subcommand_detect_explicit(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica que el subcomando explícito 'detect' funcione correctamente."""
+    input_file = tmp_path / "detect_in.csv"
+    output_file = tmp_path / "detect_out.csv"
+
+    pd.DataFrame({"repo": ["org/repo-pos"]}).to_csv(input_file, index=False)
+    mocker.patch("src.cli.check_repositories_ghaw", return_value={"org/repo-pos": True})
+
+    result = runner.invoke(
+        app,
+        [
+            "detect",
+            str(input_file),
+            "-o",
+            str(output_file),
+            "--token",
+            "tok123",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "GH-AW Detectados" in result.stdout
+    assert output_file.exists()
+
+
+def test_cli_subcommand_extract_mocked(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica la ejecución del subcomando 'extract' simulando la extracción de datos."""
+    from datetime import datetime
+
+    from src.models import ExtractedData, RepositoryRecord, WorkflowRecord, WorkflowTriggerRecord
+
+    input_file = tmp_path / "extract_in.csv"
+    output_dir = tmp_path / "parquet_ds"
+
+    pd.DataFrame({
+        "repo": ["org/agent-repo"],
+        "has_ghaw": [True],
+    }).to_csv(input_file, index=False)
+
+    fake_data = ExtractedData(
+        repositories=[
+            RepositoryRecord(
+                repo_id="r1",
+                owner="org",
+                name="agent-repo",
+                canonical_url="https://github.com/org/agent-repo",
+                stars_count=100,
+                forks_count=10,
+                primary_language="Python",
+                is_fork=False,
+                license_spdx="MIT",
+                default_branch="main",
+                scanned_at=datetime.now(UTC),
+            )
+        ],
+        workflows=[
+            WorkflowRecord(
+                workflow_id="w1",
+                repo_id="r1",
+                file_path=".github/workflows/agent.md",
+                basename="agent",
+                lock_path=".github/workflows/agent.lock.yml",
+                blob_sha="sha1",
+                name="My Agent",
+                description="Agent description",
+                model_engine="gpt-4o",
+                tools=["web"],
+                permissions=None,
+                raw_frontmatter="name: My Agent",
+                body_markdown="# Agent instructions",
+                body_word_count=2,
+                body_char_count=20,
+                has_syntax_error=False,
+            )
+        ],
+        triggers=[
+            WorkflowTriggerRecord(
+                trigger_id="t1",
+                workflow_id="w1",
+                event_type="push",
+                trigger_config="{}",
+            )
+        ],
+    )
+
+    mocker.patch("src.cli.extract_dataset", return_value=fake_data)
+
+    result = runner.invoke(
+        app,
+        [
+            "extract",
+            str(input_file),
+            "--output-dir",
+            str(output_dir),
+            "--token",
+            "fake_token_123",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Resumen de Extracción PeakyMiner" in result.stdout
+    assert "Extracción completada exitosamente" in result.stdout
+    assert (output_dir / "repositories.parquet").exists()
+    assert (output_dir / "workflows.parquet").exists()
+    assert (output_dir / "workflow_triggers.parquet").exists()
+    assert (output_dir / "README.md").exists()
+
+
+def test_cli_subcommand_upload_mocked(tmp_path: Path, mocker: pytest.MockFixture) -> None:
+    """Verifica el subcomando 'upload' invocando la subida a Hugging Face simulada."""
+    # Crear archivos simulados
+    (tmp_path / "repositories.parquet").write_bytes(b"dummy")
+    (tmp_path / "workflows.parquet").write_bytes(b"dummy")
+    (tmp_path / "workflow_triggers.parquet").write_bytes(b"dummy")
+
+    mocker.patch(
+        "src.cli.upload_to_huggingface",
+        return_value="https://huggingface.co/datasets/test-user/my-dataset",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "upload",
+            "--dataset-dir",
+            str(tmp_path),
+            "--hf-repo",
+            "test-user/my-dataset",
+            "--token",
+            "hf_token_123",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Hugging Face Upload Completado" in result.stdout
+    assert "https://huggingface.co/datasets/test-user/my-dataset" in result.stdout
