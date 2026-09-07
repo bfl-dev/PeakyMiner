@@ -38,4 +38,12 @@ dist/
 test_out*.csv
 results*.csv
 scratch/
+output.csv
+link.txt
+
+# Dataset and Parquet binaries
+/data/
+/dataset/
+*.parquet
+!eda/data/**/.gitkeep
 
