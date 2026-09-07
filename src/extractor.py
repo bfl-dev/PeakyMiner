@@ -303,9 +303,10 @@ async def extract_dataset(
             return ExtractedData()
 
         # --- FASE 2: Extracción profunda de contenidos y metadatos ---
+        batch_size_p2 = min(batch_size, 10)
         batches_phase2 = [
-            repos_with_pairs[i: i + batch_size]
-            for i in range(0, len(repos_with_pairs), batch_size)
+            repos_with_pairs[i: i + batch_size_p2]
+            for i in range(0, len(repos_with_pairs), batch_size_p2)
         ]
 
         completed_phase2 = 0

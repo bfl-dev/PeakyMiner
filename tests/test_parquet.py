@@ -3,7 +3,7 @@ Pruebas unitarias para la exportación y validación de esquemas Parquet (src/pa
 Verifica tipos PyArrow exactos, integridad referencial de PK/FK y compresión Snappy.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -37,7 +37,7 @@ def test_write_dataset_to_parquet_success(tmp_path: Path) -> None:
     workflow_id = generate_workflow_id(repo_id, file_path)
     trigger_id = generate_trigger_id(workflow_id, "push", 0)
 
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
 
     repo_rec = RepositoryRecord(
         repo_id=repo_id,

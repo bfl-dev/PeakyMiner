@@ -313,15 +313,29 @@ async def fetch_batch_workflow_pairs(
         "User-Agent": "PeakyMiner/0.1.0",
     }
 
-    try:
-        response = await client.post(
-            GITHUB_GRAPHQL_URL,
-            headers=headers,
-            json={"query": query},
-            timeout=30.0,
-        )
-    except httpx.RequestError as exc:
-        raise GitHubAPIError(f"Fallo de conexión con GitHub: {exc}") from exc
+    response = None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.post(
+                GITHUB_GRAPHQL_URL,
+                headers=headers,
+                json={"query": query},
+                timeout=45.0,
+            )
+            if response.status_code in (500, 502, 503, 504):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+                    continue
+            break
+        except httpx.RequestError as exc:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2**attempt)
+                continue
+            raise GitHubAPIError(f"Fallo de conexión con GitHub: {exc}") from exc
+
+    if response is None:
+        raise GitHubAPIError("No se obtuvo respuesta de GitHub.")
 
     if response.status_code == 401:
         raise GitHubAuthError("El token de GitHub es inválido o no está autorizado (HTTP 401).")
@@ -447,15 +461,29 @@ async def fetch_batch_deep_data(
         "User-Agent": "PeakyMiner/0.1.0",
     }
 
-    try:
-        response = await client.post(
-            GITHUB_GRAPHQL_URL,
-            headers=headers,
-            json={"query": query},
-            timeout=45.0,
-        )
-    except httpx.RequestError as exc:
-        raise GitHubAPIError(f"Fallo de conexión con GitHub en extracción profunda: {exc}") from exc
+    response = None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.post(
+                GITHUB_GRAPHQL_URL,
+                headers=headers,
+                json={"query": query},
+                timeout=60.0,
+            )
+            if response.status_code in (500, 502, 503, 504):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2**attempt)
+                    continue
+            break
+        except httpx.RequestError as exc:
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2**attempt)
+                continue
+            raise GitHubAPIError(f"Fallo de conexión con GitHub en extracción profunda: {exc}") from exc
+
+    if response is None:
+        raise GitHubAPIError("No se obtuvo respuesta de GitHub en extracción profunda.")
 
     if response.status_code == 401:
         raise GitHubAuthError("El token de GitHub es inválido o no está autorizado (HTTP 401).")
